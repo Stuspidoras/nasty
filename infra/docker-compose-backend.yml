@@ -12,16 +12,19 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - app-network
+      - backend-network
+    restart: unless-stopped
+
 
   mongodb:
-    image: mongo:6
+    image: mongo:7.0
     container_name: mongodb
     environment:
       - MONGO_INITDB_ROOT_USERNAME=mongo
@@ -30,18 +33,22 @@ services:
     ports:
       - "27017:27017"
     volumes:
-      - mongo_data:/data/db
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - app-network
+      - backend-network
+    restart: unless-stopped
+
 
   redis:
     image: redis:7-alpine
     container_name: redis
+    command: redis-server --requirepass redis123
     ports:
       - "6379:6379"
     volumes:
@@ -52,106 +59,146 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - app-network
-
-  auth-service:
-    build:
-      context: ../auth
-      dockerfile: Dockerfile
-    container_name: auth-service
-    environment:
-      - FLASK_APP=app.py
-      - FLASK_ENV=development
-      - SECRET_KEY=7K2mP9nQ3xR8zW5vL1tY4cB6hN0fG2sD7aE9qW3uI5oX8jM1kL4pR6
-      - JWT_SECRET_KEY=Z9xC2vB7nM4kL1jH3gF8dS0aP5oI6uY2tR4eW9qA1sD3fG7hJ5kN8
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres123
-      - POSTGRES_DB=reviewsdb
-    ports:
-      - "5000:5000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - app-network
+      - backend-network
     restart: unless-stopped
 
-  collector-service:
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+
+  spark-master:
+    image: bitnami/spark:3.5.0
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8080:8080"  # Spark UI
+      - "7077:7077"  # Spark Master
+    volumes:
+      - ../spark_job:/app
+      - spark_data:/tmp/spark-events
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+
+  spark-worker:
+    image: bitnami/spark:3.5.0
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8081:8081"  # Worker UI
+    volumes:
+      - ../spark_job:/app
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+
+  collector:
     build:
       context: ../collector
       dockerfile: Dockerfile
-    container_name: collector-service
+    container_name: collector
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
-      - FLASK_APP=app.py
-      - FLASK_ENV=development
       - MONGO_HOST=mongodb
       - MONGO_PORT=27017
       - MONGO_USER=mongo
       - MONGO_PASSWORD=mongo123
       - MONGO_DB=reviews
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres123
       - POSTGRES_DB=reviewsdb
-    ports:
-      - "5001:5001"
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
+      - VK_TOKEN=${VK_TOKEN}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ../collector:/app
+      - collector_logs:/app/logs
     networks:
-      - app-network
+      - backend-network
     restart: unless-stopped
 
-  celery-worker:
-    build:
-      context: ../collector
-      dockerfile: Dockerfile
-    container_name: celery-worker
-    command: celery -A celery_worker.celery_app worker --loglevel=info
-    environment:
-      - MONGO_HOST=mongodb
-      - MONGO_PORT=27017
-      - MONGO_USER=mongo
-      - MONGO_PASSWORD=mongo123
-      - MONGO_DB=reviews
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres123
-      - POSTGRES_DB=reviewsdb
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    networks:
-      - app-network
-    restart: unless-stopped
 
-  api-service:
+  api:
     build:
       context: ../api
       dockerfile: Dockerfile
-    container_name: api-service
+    container_name: api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      - FLASK_APP=app.py
-      - FLASK_ENV=development
-      - JWT_SECRET_KEY=Z9xC2vB7nM4kL1jH3gF8dS0aP5oI6uY2tR4eW9qA1sD3fG7hJ5kN8
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=postgres
@@ -162,22 +209,219 @@ services:
       - MONGO_USER=mongo
       - MONGO_PASSWORD=mongo123
       - MONGO_DB=reviews
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      - MODEL_PATH=/app/models/sentiment
+      - PYTHONUNBUFFERED=1
     ports:
-      - "5002:5002"
+      - "8000:8000"
+    volumes:
+      - ../api:/app
+      - model_data:/app/models
+      - api_logs:/app/logs
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+
+  auth:
+    build:
+      context: ../auth
+      dockerfile: Dockerfile
+    container_name: auth
     depends_on:
       postgres:
         condition: service_healthy
-      mongodb:
+      redis:
         condition: service_healthy
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres123
+      - POSTGRES_DB=reviewsdb
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8001:8001"
+    volumes:
+      - ../auth:/app
+      - auth_logs:/app/logs
     networks:
-      - app-network
+      - backend-network
     restart: unless-stopped
 
-networks:
-  app-network:
-    driver: bridge
+
+  train-service:
+    build:
+      context: ../train
+      dockerfile: Dockerfile
+    container_name: train-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+
+      - MODEL_NAME=DeepPavlov/rubert-base-cased
+      - MAX_LENGTH=128
+      - NUM_LABELS=3
+
+      - BATCH_SIZE=16
+      - LEARNING_RATE=2e-5
+      - EPOCHS=3
+
+      - MODEL_DIR=/app/models
+      - OUTPUT_DIR=/app/models/sentiment
+
+      - MONGO_HOST=mongodb
+      - MONGO_PORT=27017
+      - MONGO_USER=mongo
+      - MONGO_PASSWORD=mongo123
+      - MONGO_DB=reviews
+
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres123
+      - POSTGRES_DB=reviewsdb
+
+      - PYTHONUNBUFFERED=1
+      - TRANSFORMERS_CACHE=/app/.cache/huggingface
+    volumes:
+      - ../train:/app
+      - model_data:/app/models
+      - huggingface_cache:/app/.cache/huggingface
+      - train_logs:/app/logs
+    # GPU поддержка:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    networks:
+      - backend-network
+    restart: "no"
+
+
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    depends_on:
+      - postgres
+    ports:
+      - "8082:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    depends_on:
+      - mongodb
+    ports:
+      - "8083:8081"
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=mongo
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=mongo123
+      - ME_CONFIG_MONGODB_URL=mongodb://mongo:mongo123@mongodb:27017/
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=admin123
+    networks:
+      - backend-network
+    restart: unless-stopped
+
 
 volumes:
   postgres_data:
-  mongo_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
   redis_data:
+    driver: local
+  kafka_data:
+    driver: local
+  zookeeper_data:
+    driver: local
+  zookeeper_logs:
+    driver: local
+  spark_data:
+    driver: local
+  model_data:
+    driver: local
+  huggingface_cache:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  collector_logs:
+    driver: local
+  api_logs:
+    driver: local
+  auth_logs:
+    driver: local
+  train_logs:
+    driver: local
+
+
+networks:
+  backend-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

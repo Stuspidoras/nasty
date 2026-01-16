@@ -5,10 +5,10 @@ metadata:
   namespace: review-analytics
 type: Opaque
 stringData:
-  VK_ACCESS_TOKEN: "your-vk-token"
-  OK_ACCESS_TOKEN: "your-ok-token"
-  OK_APPLICATION_KEY: "your-ok-app-key"
-  OK_SESSION_SECRET_KEY: "your-ok-secret"
+  VK_ACCESS_TOKEN:
+  OK_ACCESS_TOKEN:
+  OK_APPLICATION_KEY:
+  OK_SESSION_SECRET_KEY:
 ---
 apiVersion: apps/v1
 kind: Deployment
