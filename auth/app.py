@@ -11,11 +11,9 @@ from config import Config
 app = Flask(__name__)
 CORS(app)
 
-# Подключение к Redis для кэширования токенов
 redis_client = redis.Redis(host=Config.REDIS_HOST, port=Config.REDIS_PORT, decode_responses=True)
 
 def get_db_connection():
-    """Создание подключения к PostgreSQL"""
     conn = psycopg2.connect(
         host=Config.POSTGRES_HOST,
         port=Config.POSTGRES_PORT,
@@ -26,7 +24,6 @@ def get_db_connection():
     return conn
 
 def token_required(f):
-    """Декоратор для проверки JWT токена"""
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization')
@@ -56,12 +53,10 @@ def token_required(f):
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Проверка здоровья сервиса"""
     return jsonify({'status': 'healthy'}), 200
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
-    """Регистрация нового пользователя"""
     data = request.get_json()
 
     username = data.get('username')
@@ -71,7 +66,6 @@ def register():
     if not username or not email or not password:
         return jsonify({'error': 'Все поля обязательны'}), 400
 
-    # Хэширование пароля
     password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
     try:
@@ -100,7 +94,6 @@ def register():
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
-    """Вход пользователя"""
     data = request.get_json()
 
     email = data.get('email')
@@ -124,18 +117,15 @@ def login():
 
         user_id, username, password_hash = user
 
-        # Проверка пароля
         if not bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8')):
             return jsonify({'error': 'Неверный email или пароль'}), 401
 
-        # Создание JWT токена
         token = jwt.encode({
             'user_id': user_id,
             'username': username,
             'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=Config.JWT_EXPIRATION_HOURS)
         }, Config.JWT_SECRET_KEY, algorithm='HS256')
 
-        # Кэширование токена в Redis
         redis_client.setex(f"user:{user_id}:token",
                           Config.JWT_EXPIRATION_HOURS * 3600,
                           token)
@@ -155,7 +145,6 @@ def login():
 @app.route('/api/auth/logout', methods=['POST'])
 @token_required
 def logout(current_user_id):
-    """Выход пользователя"""
     token = request.headers.get('Authorization')[7:]
 
     # Добавление токена в черный список

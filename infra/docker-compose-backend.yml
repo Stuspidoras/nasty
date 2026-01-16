@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     container_name: postgres
@@ -21,7 +20,6 @@ services:
     networks:
       - app-network
 
-  # MongoDB Database
   mongodb:
     image: mongo:6
     container_name: mongodb
@@ -41,7 +39,6 @@ services:
     networks:
       - app-network
 
-  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -57,7 +54,6 @@ services:
     networks:
       - app-network
 
-  # Auth Service
   auth-service:
     build:
       context: ../auth
@@ -84,7 +80,6 @@ services:
       - app-network
     restart: unless-stopped
 
-  # Collector Service
   collector-service:
     build:
       context: ../collector
@@ -118,7 +113,6 @@ services:
       - app-network
     restart: unless-stopped
 
-  # Celery Worker
   celery-worker:
     build:
       context: ../collector
@@ -149,7 +143,6 @@ services:
       - app-network
     restart: unless-stopped
 
-  # API Service
   api-service:
     build:
       context: ../api

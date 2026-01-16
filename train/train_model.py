@@ -17,9 +17,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ReviewDataset(Dataset):
-    """
-    Dataset для отзывов
-    """
 
     def __init__(self, texts, labels, tokenizer, max_length=128):
         self.texts = texts
@@ -51,15 +48,11 @@ class ReviewDataset(Dataset):
         }
 
 class SentimentModelTrainer:
-    """
-    Тренер модели для анализа тональности
-    """
 
     def __init__(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info(f"Используется устройство: {self.device}")
 
-        # Загрузка токенизатора и модели
         self.tokenizer = AutoTokenizer.from_pretrained(Config.MODEL_NAME)
         self.model = AutoModelForSequenceClassification.from_pretrained(
             Config.MODEL_NAME,
@@ -67,14 +60,11 @@ class SentimentModelTrainer:
         )
         self.model.to(self.device)
 
-        # Подготовка данных
         self.preparer = DatasetPreparer()
         self.train_df, self.val_df, self.test_df = self.preparer.prepare_dataset()
 
     def create_data_loaders(self):
-        """
-        Создание DataLoader'ов для обучения
-        """
+
         train_dataset = ReviewDataset(
             self.train_df['text'].values,
             self.train_df['label'].values,
@@ -117,9 +107,7 @@ class SentimentModelTrainer:
         return train_loader, val_loader, test_loader
 
     def train_epoch(self, train_loader, optimizer, scheduler):
-        """
-        Обучение на одной эпохе
-        """
+
         self.model.train()
         total_loss = 0
         predictions = []
@@ -146,7 +134,6 @@ class SentimentModelTrainer:
             optimizer.step()
             scheduler.step()
 
-            # Сохранение предсказаний
             preds = torch.argmax(outputs.logits, dim=1)
             predictions.extend(preds.cpu().numpy())
             true_labels.extend(labels.cpu().numpy())
@@ -161,9 +148,7 @@ class SentimentModelTrainer:
         return avg_loss, accuracy, f1
 
     def evaluate(self, data_loader):
-        """
-        Оценка модели
-        """
+
         self.model.eval()
         total_loss = 0
         predictions = []
@@ -195,15 +180,10 @@ class SentimentModelTrainer:
         return avg_loss, accuracy, f1, predictions, true_labels
 
     def train(self):
-        """
-        Полный цикл обучения
-        """
         logger.info("Начало обучения модели...")
 
-        # Создание DataLoader'ов
         train_loader, val_loader, test_loader = self.create_data_loaders()
 
-        # Оптимизатор и scheduler
         optimizer = AdamW(self.model.parameters(), lr=Config.LEARNING_RATE)
 
         total_steps = len(train_loader) * Config.EPOCHS
@@ -215,13 +195,11 @@ class SentimentModelTrainer:
 
         best_val_f1 = 0
 
-        # Обучение
         for epoch in range(Config.EPOCHS):
             logger.info(f"\n{'='*50}")
             logger.info(f"Эпоха {epoch + 1}/{Config.EPOCHS}")
             logger.info(f"{'='*50}")
 
-            # Обучение
             train_loss, train_acc, train_f1 = self.train_epoch(
                 train_loader, optimizer, scheduler
             )
@@ -230,20 +208,17 @@ class SentimentModelTrainer:
             logger.info(f"Train Accuracy: {train_acc:.4f}")
             logger.info(f"Train F1: {train_f1:.4f}")
 
-            # Валидация
             val_loss, val_acc, val_f1, _, _ = self.evaluate(val_loader)
 
             logger.info(f"\nVal Loss: {val_loss:.4f}")
             logger.info(f"Val Accuracy: {val_acc:.4f}")
             logger.info(f"Val F1: {val_f1:.4f}")
 
-            # Сохранение лучшей модели
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
                 self.save_model()
-                logger.info(f"✓ Новая лучшая модель сохранена! F1: {val_f1:.4f}")
+                logger.info(f"Новая лучшая модель сохранена! F1: {val_f1:.4f}")
 
-        # Финальное тестирование
         logger.info("\n" + "="*50)
         logger.info("ФИНАЛЬНОЕ ТЕСТИРОВАНИЕ")
         logger.info("="*50)
@@ -254,7 +229,6 @@ class SentimentModelTrainer:
         logger.info(f"Test Accuracy: {test_acc:.4f}")
         logger.info(f"Test F1: {test_f1:.4f}")
 
-        # Детальный отчет
         label_names = ['negative', 'neutral', 'positive']
         report = classification_report(true_labels, predictions, target_names=label_names)
         logger.info(f"\nКлассификационный отчет:\n{report}")
@@ -262,9 +236,7 @@ class SentimentModelTrainer:
         logger.info("\n✓ Обучение завершено успешно!")
 
     def save_model(self):
-        """
-        Сохранение модели и токенизатора
-        """
+
         os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
 
         self.model.save_pretrained(Config.OUTPUT_DIR)
@@ -273,9 +245,7 @@ class SentimentModelTrainer:
         logger.info(f"Модель сохранена в {Config.OUTPUT_DIR}")
 
     def load_model(self):
-        """
-        Загрузка сохраненной модели
-        """
+
         self.model = AutoModelForSequenceClassification.from_pretrained(Config.OUTPUT_DIR)
         self.tokenizer = AutoTokenizer.from_pretrained(Config.OUTPUT_DIR)
         self.model.to(self.device)

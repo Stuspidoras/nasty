@@ -9,10 +9,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Создание Celery приложения
 celery_app = Celery('collector', broker=f'redis://{Config.REDIS_HOST}:{Config.REDIS_PORT}/0')
 
-# MongoDB подключение
 mongo_client = MongoClient(Config.get_mongo_url())
 mongo_db = mongo_client[Config.MONGO_DB]
 
@@ -29,9 +27,6 @@ def get_postgres_connection():
 
 @celery_app.task(name='collect_reviews_task')
 def collect_reviews_task(sources, keywords, count=100):
-    """
-    Асинхронная задача сбора отзывов
-    """
     vk_collector = VKCollector()
     ok_collector = OKCollector()
 
@@ -54,12 +49,10 @@ def collect_reviews_task(sources, keywords, count=100):
             ok_posts = ok_collector.search_posts(keyword, count)
             all_posts.extend(ok_posts)
 
-    # Сохранение в MongoDB
     if all_posts:
         mongo_db.raw_posts.insert_many(all_posts)
         logger.info(f"Сохранено {len(all_posts)} постов в MongoDB")
 
-    # Сохранение метаданных в PostgreSQL
     try:
         conn = get_postgres_connection()
         cur = conn.cursor()

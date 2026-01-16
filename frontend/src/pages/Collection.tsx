@@ -21,7 +21,6 @@ const Collection: React.FC = () => {
     }
   };
 
-  // Временные данные для таблицы задач
   const tasksData = [
     {
       key: '1',

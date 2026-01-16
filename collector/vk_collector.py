@@ -14,9 +14,6 @@ class VKCollector:
         self.vk = self.vk_session.get_api()
 
     def search_posts(self, query, count=100):
-        """
-        Поиск постов по ключевым словам в VK
-        """
         posts = []
         offset = 0
 
@@ -46,9 +43,6 @@ class VKCollector:
             return posts
 
     def search_wall_posts(self, owner_id, query, count=100):
-        """
-        Поиск постов на стене сообщества/пользователя
-        """
         posts = []
         offset = 0
 
@@ -81,9 +75,7 @@ class VKCollector:
             return posts
 
     def get_comments(self, owner_id, post_id, count=100):
-        """
-        Получение комментариев к посту
-        """
+
         comments = []
         offset = 0
 
@@ -130,7 +122,7 @@ class VKCollector:
         }
 
     def _parse_comment(self, item):
-        """Парсинг данных комментария"""
+
         return {
             'comment_id': item.get('id'),
             'from_id': item.get('from_id'),
